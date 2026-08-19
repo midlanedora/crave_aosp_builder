@@ -1,0 +1,63 @@
+name: Build Lunaris AOSP for Rodin
+
+on:
+  workflow_dispatch: # Mengizinkan eksekusi manual (trigger) dari tab Actions
+
+jobs:
+  build:
+    name: Build ROM
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Maximize Build Space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          swap-size-mb: 8192
+          remove-dotnet: 'true'
+          remove-android: 'true' # Kita hapus SDK bawaan agar ruang lega
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+
+      - name: Setup Environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git-core gnupg flex bison build-essential zip curl zlib1g-dev gcc-multilib g++-multilib libc6-dev-i386 lib32ncurses5-dev x11proto-core-dev libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig
+
+      - name: Install Repo Tool
+        run: |
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          echo "~/bin" >> $GITHUB_PATH
+
+      - name: Initialize and Sync Lunaris AOSP
+        run: |
+          mkdir workspace && cd workspace
+          git config --global user.name "RodinBuilder"
+          git config --global user.email "builder@rodin.com"
+          # Menggunakan --depth=1 sangat krusial di Cloud untuk menghemat ratusan GB riwayat commit
+          repo init -u https://github.com/Lunaris-AOSP/android.git -b [16.2] --depth=1
+          repo sync -c --no-clone-bundle --no-tags --optimized-fetch --prune -j$(nproc --all)
+
+      - name: Clone Device, Vendor, and Kernel Trees
+        run: |
+          cd workspace
+          # Ganti URL di bawah dengan repository tree yang valid untuk Rodin
+          git clone https://github.com/xiaomi-mt6899-dev/android_device_xiaomi_rodin.git -b [16.2-fenrir] device/xiaomi/rodin
+          git clone [https://github.com/Digimend-X-Rodin/android_device_mediatek_sepolicy_vndr.git] -b [lineage-23.2] vendor/xiaomi/rodin
+          git clone [https://github.com/xiaomi-mt6899-dev/android_device_xiaomi_rodin-kernel.git] -b [lineage-23.2] kernel/xiaomi/mt6899
+
+      - name: Build ROM
+        run: |
+          cd workspace
+          source build/envsetup.sh
+          lunch lunaris_rodin-userdebug
+          mka bacon -j$(nproc --all)
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lunaris-Rodin-ROM
+          path: workspace/out/target/product/rodin/*UNOFFICIAL*.zip
